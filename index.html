@@ -241,6 +241,7 @@ const r2=n=>Math.round(n*100)/100;
 const sum=(a,f=x=>x)=>a.reduce((s,x)=>s+(+f(x)||0),0);
 const uid=()=>Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-5);
 const SYM={PEN:'S/',USD:'US$'};
+const CLOUD_URL='https://claude.ai/artifact/TVxdCErLHxzCZmarMhnLJ7';
 function money(n,cur='PEN',dec){n=+n||0;const d=dec??(Math.abs(n)>=10000?0:2);return '<span class="money">'+(n<0?'−':'')+SYM[cur]+' '+Math.abs(n).toLocaleString('es-PE',{minimumFractionDigits:d,maximumFractionDigits:d})+'</span>'}
 function moneyT(n,cur='PEN',dec){n=+n||0;const d=dec??(Math.abs(n)>=10000?0:2);return (n<0?'−':'')+SYM[cur]+' '+Math.abs(n).toLocaleString('es-PE',{minimumFractionDigits:d,maximumFractionDigits:d})}
 const C=()=>S.config;
@@ -390,7 +391,8 @@ const Store={
   withTimeout(p,ms){return Promise.race([p,new Promise(r=>setTimeout(()=>r(null),ms))])},
   async init(){
     let db=null,user=null;
-    if(typeof claude!=='undefined'&&claude&&claude.use){
+    this.inClaude=typeof claude!=='undefined'&&!!claude&&!!claude.use;
+    if(this.inClaude){
       try{[db,user]=await Promise.all([this.withTimeout(claude.use('db'),11000),this.withTimeout(claude.use('user'),11000)])}catch(e){}
     }
     this.user=user;
@@ -402,8 +404,9 @@ const Store={
         if(!snap) throw new Error('timeout');
         snap.docs.forEach(d=>this.ingest(d.id,d.data()));
         this.listen();
-      }catch(e){console.warn('db',e);this.mode='local';this.loadLocal();setSync('err','Sin conexión a la base de datos: modo local')}
-    }else{this.mode='local';this.loadLocal()}
+      }catch(e){console.warn('db',e);this.mode='error';return}
+    }else if(this.inClaude){this.mode='error';return}
+    else{this.mode='local';this.loadLocal()}
     setSync('ok');
   },
   base(){return 'data/users/'+this.uid},
@@ -910,7 +913,8 @@ VIEWS.inicio=()=>{
   const recent=allMovs().sort((a,b)=>b.date.localeCompare(a.date)||b.ts-a.ts).slice(0,6);
   return `
   ${noBal?`<div class="banner info"><span>👋</span><div><b>Empecemos con tus saldos reales.</b> Ve a <a data-act="go" data-v="cuentas" href="#cuentas">Cuentas</a> y escribe cuánto tienes hoy en cada una. No inventé ningún saldo.</div></div>`:''}
-  ${Store.mode!=='db'?`<div class="banner warn"><span>💾</span><div><b>Modo local:</b> tus datos se guardan solo en este navegador. Abre la app desde tu cuenta de Claude para sincronizar entre celular y laptop.</div></div>`:''}
+  ${!C().pin?`<div class="banner info"><span>🔐</span><div><b>Protege tu app con un PIN.</b> Lo pediré cada vez que entres. <button class="linkbtn" data-act="setPin">Crear PIN</button></div></div>`:''}
+  ${Store.mode!=='db'?`<div class="banner warn"><span>💾</span><div><b>Copia local:</b> estos datos viven solo en este dispositivo. Tu app sincronizada está en <a href="${CLOUD_URL}" target="_blank" rel="noopener">Claude</a>.</div></div>`:''}
   <div class="grid md32">
     <div class="card hero">
       <div class="lbl">💸 Dinero disponible (libre)</div>
@@ -1748,7 +1752,7 @@ function onboarding(){
   <p class="small muted">Empiezo vacía: sin saldos ni movimientos inventados. Ya dejé listas tus cuentas, categorías, gastos fijos y metas para que solo registres tus datos reales.</p>
   <label class="f">¿Cómo te llamo?</label><input class="inp" id="obN" value="${esc(me.name?String(me.name).split(' ')[0]:'Valeria')}">
   <label class="f">Correo para recordatorios</label><input class="inp" id="obE" type="email" value="${esc(me.email||'')}" placeholder="tu@correo.com">
-  ${Store.mode==='db'?'<div class="banner info" style="margin-top:12px"><span>☁️</span><div class="small">Tus datos se guardarán en una base de datos privada de tu cuenta: los verás igual en tu celular y tu laptop.</div></div>':'<div class="banner warn" style="margin-top:12px"><span>💾</span><div class="small">Estás fuera de claude.ai: los datos se guardarán solo en este navegador.</div></div>'}
+  ${Store.mode==='db'?'<div class="banner info" style="margin-top:12px"><span>☁️</span><div class="small">Tus datos se guardarán en una base de datos privada de tu cuenta: los verás igual en tu celular y tu laptop.</div></div>':`<div class="banner warn" style="margin-top:12px"><span>💾</span><div class="small"><b>Esta copia guarda los datos solo en este dispositivo.</b> Tus saldos y metas están en tu app sincronizada de Claude: <a href="${CLOUD_URL}" target="_blank" rel="noopener">ábrela aquí</a> (y agrégala a tu pantalla de inicio). Si prefieres usar esta copia, importa un respaldo.</div></div><div class="btns" style="margin-top:8px"><button class="btn ghost block" id="obImp">📥 Importar respaldo</button></div>`}
   <div class="btns" style="margin-top:14px"><button class="btn wine block" id="obOk">Empezar y crear mi PIN 🔐</button></div>
   <div class="btns" style="margin-top:8px"><button class="btn ghost block" id="obSkip">Empezar sin PIN</button></div></div>`;
   const start=withPin=>{
@@ -1760,6 +1764,7 @@ function onboarding(){
     if(withPin)setTimeout(()=>pinSetup(true),300);
   };
   $('#obOk').onclick=()=>start(true);$('#obSkip').onclick=()=>start(false);
+  const oi=$('#obImp');if(oi)oi.onclick=()=>{S.config=defaultConfig('Valeria','');UI.unlocked=true;L.classList.add('hidden');$('#app').classList.remove('hidden');chartDefaults();render();ACT.importData()};
 }
 
 /* =========================================================
@@ -1774,6 +1779,11 @@ function afterUnlock(){
 try{if('serviceWorker' in navigator&&location.protocol==='https:'&&!/claude\.ai|claudeusercontent/.test(location.hostname))navigator.serviceWorker.register('sw.js').catch(()=>{})}catch(e){}
 (async function boot(){
   await Store.init();
+  if(Store.mode==='error'){
+    const L=$('#lock');L.classList.remove('hidden');
+    L.innerHTML=`<div class="brand">Mis <b>Finanzas</b></div><p style="opacity:.85;max-width:320px">No pude conectarme con tus datos guardados. Revisa tu conexión a internet y vuelve a intentarlo. Tus datos están a salvo.</p><button class="btn pist" id="rt" style="margin-top:12px">Reintentar</button>`;
+    $('#rt').onclick=()=>location.reload();return;
+  }
   const h=location.hash.slice(1);if(h&&VIEWS[h])UI.view=h;
   if(!S.config){onboarding();return}
   // migraciones suaves
